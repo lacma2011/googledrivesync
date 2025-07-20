@@ -134,6 +134,7 @@ main() {
     echo "Running gods-writings-move_if_older.sh..." >&2
     # Expand the tilde in the destination path
     destination_dir="$HOME/GoogleDrive/gods-writing/"
+    echo "Moving $local_file to $destination_dir" >&2
     ./gods-writings-move_if_older.sh "$local_file" "$destination_dir"
     
     # Unmount rclone
