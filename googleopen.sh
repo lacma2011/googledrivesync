@@ -130,12 +130,20 @@ main() {
     echo "Opening $(basename "$local_file") in emacs..." >&2
     emacs "$local_file"
     
+    # Wait for user before running move script
+    echo >&2
+    read -p "Press Enter to run gods-writings-move_if_older.sh..." >&2
+    
     # After emacs exits, run the move script to move local file back to Google Drive
     echo "Running gods-writings-move_if_older.sh..." >&2
     # Expand the tilde in the destination path
     destination_dir="$HOME/GoogleDrive/gods-writing/"
     echo "Moving $local_file to $destination_dir" >&2
     ./gods-writings-move_if_older.sh "$local_file" "$destination_dir"
+    
+    # Wait for user before unmounting and finishing
+    echo >&2
+    read -p "Press Enter to unmount and finish..." >&2
     
     # Unmount rclone
     unmount_rclone
