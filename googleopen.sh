@@ -24,13 +24,15 @@ start_rclone() {
         mkdir -p ~/GoogleDrive
     fi
 
-    # 3. Start rclone mount
+    # 3. Start rclone mount with better caching for this use case
     rclone mount google-drive: ~/GoogleDrive \
-      --vfs-cache-mode writes \
+      --vfs-cache-mode full \
+      --vfs-cache-max-age 10m \
+      --vfs-cache-max-size 100M \
       --daemon
 
-    # Wait a moment for mount to be ready
-    sleep 2
+    # Wait longer for mount to be ready
+    sleep 5
     
     # Verify mount worked
     if ! is_mounted; then
@@ -92,6 +94,44 @@ select_file() {
     echo "$selected_file"  # This goes to stdout for capture
 }
 
+# Function to sync and verify file upload
+sync_and_verify() {
+    local file_path="$1"
+    local max_attempts=5
+    local attempt=1
+    
+    echo "Syncing file to Google Drive..." >&2
+    
+    while [ $attempt -le $max_attempts ]; do
+        echo "Sync attempt $attempt..." >&2
+        
+        # Force sync the specific directory
+        rclone sync "$(dirname "$file_path")" google-drive:gods-writing --progress
+        
+        # Wait a moment for sync to complete
+        sleep 3
+        
+        # Verify the file exists and has content on Google Drive
+        local remote_size=$(rclone size google-drive:gods-writing/$(basename "$file_path") --json 2>/dev/null | jq -r '.bytes // 0' 2>/dev/null || echo "0")
+        local local_size=$(stat -f%z "$file_path" 2>/dev/null || stat -c%s "$file_path" 2>/dev/null || echo "0")
+        
+        echo "Local file size: $local_size bytes" >&2
+        echo "Remote file size: $remote_size bytes" >&2
+        
+        if [ "$remote_size" -gt 0 ] && [ "$remote_size" -eq "$local_size" ]; then
+            echo "File successfully synced!" >&2
+            return 0
+        fi
+        
+        echo "Sync verification failed, retrying..." >&2
+        attempt=$((attempt + 1))
+        sleep 2
+    done
+    
+    echo "Warning: Could not verify successful sync after $max_attempts attempts" >&2
+    return 1
+}
+
 # Function to unmount rclone
 unmount_rclone() {
     if is_mounted; then
@@ -130,16 +170,38 @@ main() {
     echo "Opening $(basename "$local_file") in emacs..." >&2
     emacs "$local_file"
     
-    # Wait for user before running move script
-    echo >&2
-    read -p "Press Enter to run gods-writings-move_if_older.sh..." >&2
+    # Verify file was actually modified and has content
+    if [ ! -s "$local_file" ]; then
+        echo "Warning: Local file appears to be empty!" >&2
+        read -p "Do you want to continue anyway? (y/N): " continue_empty
+        if [[ ! "$continue_empty" =~ ^[Yy]$ ]]; then
+            echo "Aborting..." >&2
+            unmount_rclone
+            exit 1
+        fi
+    fi
     
-    # After emacs exits, run the move script to move local file back to Google Drive
-    echo "Running gods-writings-move_if_older.sh..." >&2
-    # Expand the tilde in the destination path
+    echo "Local file size: $(wc -c < "$local_file") bytes" >&2
+    
+    # Wait for user before moving
+    echo >&2
+    read -p "Press Enter to move file back to Google Drive..." >&2
+    
+    # Move to Google Drive mount point first
     destination_dir="$HOME/GoogleDrive/gods-writing/"
     echo "Moving $local_file to $destination_dir" >&2
-    ./gods-writings-move_if_older.sh "$local_file" "$destination_dir"
+    
+    # Use cp instead of mv to keep a backup, then sync
+    cp "$local_file" "$destination_dir"
+    
+    # Sync and verify
+    if sync_and_verify "$destination_dir$(basename "$local_file")"; then
+        echo "File successfully uploaded to Google Drive!" >&2
+        # Only remove local file after successful sync
+        rm "$local_file"
+    else
+        echo "Keeping local file as backup due to sync issues" >&2
+    fi
     
     # Wait for user before unmounting and finishing
     echo >&2
